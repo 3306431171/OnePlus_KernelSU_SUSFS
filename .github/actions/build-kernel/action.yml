@@ -1194,6 +1194,19 @@ runs:
             echo "🔧 compat: KERNEL_SU_UAPI_VERSION synced to upstream main ($MAIN_UAPI) so the manager matches the kernel"
           fi
         fi
+
+        # 4) builtin 分支合入 PR #3871（pkg_observer 延迟 track_throne 到 task_work）时，
+        #    pkg_observer.c 以 track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS) 调用，
+        #    但 builtin 的 track_throne() 仍为 bool 形参，且没有任何头文件定义该标志
+        #    （BakaSU 的 flags 版 throne_tracker API 未随补丁同步），所有构建在
+        #    ksu.c 聚合编译报 "use of undeclared identifier"。
+        #    改用 track_throne(false)（全量扫描，与 main 分支同函数写法一致）；
+        #    上游修复后按内容检测自动跳过。
+        PKG_OBS="$KSU_FOLDER/kernel/manager/pkg_observer.c"
+        if [ -f "$PKG_OBS" ] && grep -q 'track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)' "$PKG_OBS"; then
+          sed -i 's/track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)/track_throne(false)/g' "$PKG_OBS"
+          echo "🔧 compat: pkg_observer track_throne flag replaced with track_throne(false) (builtin PR #3871)"
+        fi
         cd KernelSU/kernel
 
         # SukiSU Kbuild 自动计算版本 (40000 + REPO_BRANCH 指向分支的提交数 - 2815)
