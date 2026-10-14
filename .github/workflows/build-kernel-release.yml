@@ -906,6 +906,9 @@ jobs:
           # Remove ccache-binary artifacts
           rm -f ./downloaded-artifacts/ccache-binary.zip
 
+          # 构建日志不作为 release 资产发布
+          rm -f ./downloaded-artifacts/*-Build-Logs.zip ./downloaded-artifacts/AIO-BUILD-LOGS.zip
+
           # Extract KernelSU Manager APKs from their artifact zips so release
           # assets contain the raw .apk instead of a wrapped .zip
           shopt -s nullglob
@@ -1178,6 +1181,9 @@ jobs:
           shopt -u nullglob
           for file in ./downloaded-artifacts/*.zip; do
             if [ -f "$file" ]; then
+              case "$file" in
+                *-Build-Logs.zip|AIO-BUILD-LOGS.zip) continue ;;
+              esac
               echo "Uploading $file..."
               gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
             fi
