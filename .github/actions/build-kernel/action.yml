@@ -1220,6 +1220,17 @@ runs:
         if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" ]; then
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" "$KSU_FOLDER" "$COMMON_KERNEL_FOLDER"
         fi
+
+        # 6) builtin PR #987（动态多管理器签名授权，a2339013/c95d6e2c）引入的内核侧
+        #    编译错误：supercall.h 新 ioctl 声明少写 struct 关键字 + 错用已存在的
+        #    KSU_IOCTL_KPM 名字（匿名 enum 重复定义，dispatch.c 引用的
+        #    KSU_IOCTL_MANAGER 缺失）；throne_tracker.c crown_manager() 裸 return;
+        #    （a2339013）与 pkg 块内声明块外引用（c95d6e2c）。全部平台在 ksu.c
+        #    聚合编译失败；详见 scripts/susfs_compat/apply_sukisu_manager_ioctl.sh
+        #    （内容检测守卫，幂等，上游修复后自动跳过）。
+        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" ]; then
+          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" "$KSU_FOLDER"
+        fi
         cd KernelSU/kernel
 
         # SukiSU Kbuild 自动计算版本 (40000 + REPO_BRANCH 指向分支的提交数 - 2815)
