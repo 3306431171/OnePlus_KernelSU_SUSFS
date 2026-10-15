@@ -1207,6 +1207,19 @@ runs:
           sed -i 's/track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)/track_throne(false)/g' "$PKG_OBS"
           echo "🔧 compat: pkg_observer track_throne flag replaced with track_throne(false) (builtin PR #3871)"
         fi
+
+        # 5) builtin 2026-05-29 (5fb0c079) 同步 tiann/KernelSU 的 SELinux 新检测修复后，
+        #    selinux_hide.c 在 >=6.6 分支把 security_dump_masked_av_fn /
+        #    context_struct_compute_av_fn 声明为 extern 函数——上游预期由 services.c
+        #    补丁提供这两个跳板符号（builtin c32094a4），但 SUSFS 内核主补丁只提供
+        #    my_security_compute_av_user，6.6/6.12 的 SukiSU 构建在 vmlinux 链接报
+        #    "undefined symbol: context_struct_compute_av_fn"。
+        #    本仓库 SukiSU 固定检出 builtin（含 susfs=false 的构建），在 services.c
+        #    末尾补上两个跳板；详见
+        #    scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh（幂等，自动跳过）。
+        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" ]; then
+          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" "$KSU_FOLDER" "$COMMON_KERNEL_FOLDER"
+        fi
         cd KernelSU/kernel
 
         # SukiSU Kbuild 自动计算版本 (40000 + REPO_BRANCH 指向分支的提交数 - 2815)
