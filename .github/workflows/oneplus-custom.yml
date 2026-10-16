@@ -207,6 +207,11 @@ on:
           - O2
           - O3
         default: O2
+      mirror_toolchains:
+        description: '构建前同步工具链（自动检查并补齐缺失缓存，已有缓存时秒级跳过）'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   set-matrix:
@@ -404,6 +409,7 @@ jobs:
             echo "| Re-Kernel | ${{ inputs.use_rekernel && '✅ enabled' || '❌ disabled' }} |"
             echo "| Optimization | \`${{ inputs.optimize_level }}\` |"
             echo "| Droidspaces & NTSync | ${{ inputs.enable_droidspaces_ntsync && '✅ enabled' || '❌ disabled' }} |"
+            echo "| Toolchain sync | ${{ inputs.mirror_toolchains && '✅ enabled' || '❌ disabled' }} |"
             echo "| Custom version | \`${{ inputs.custom_version || 'auto (-<android> KMI tag)' }}\` |"
             echo "| Build timestamp | \`${{ inputs.build_timestamp || 'auto (current build time)' }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -440,12 +446,19 @@ jobs:
           retention-days: 1
           if-no-files-found: warn
 
+  mirror_toolchain:
+    needs: set-matrix
+    if: ${{ inputs.mirror_toolchains }}
+    uses: ./.github/workflows/mirror-toolchains.yml
+    secrets: inherit
+
   build:
     name: build (${{ needs.set-matrix.outputs.model_display }}, ${{ inputs.ksu_variant }})
-    needs: [set-matrix, prepare_ccache, get-manager]
+    needs: [set-matrix, mirror_toolchain, prepare_ccache, get-manager]
     if: |
       !cancelled() &&
-      needs.set-matrix.result == 'success'
+      needs.set-matrix.result == 'success' &&
+      (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout Code
