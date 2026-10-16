@@ -4,19 +4,18 @@
 # susfs4ksu 各 GKI 分支的 kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
 # 针对 FinaSU（新目录布局）的内核源码生成，用于把 FinaSU 从 inline syscall
 # hook 模式改写为 SUSFS 手动钩子模式（五个 GKI 分支的该补丁字节级相同）。
-# FinaSU master 在补丁基准之后又合入了动态管理器、AVC log spoofing 等特性，
-# 其中 4 个文件上下文漂移，上游补丁无法直接命中：
-#   kernel/core/init.c
-#   kernel/feature/selinux_hide.c
-#   kernel/runtime/boot_event.c
-#   kernel/supercall/dispatch.c
 #
-# 本脚本按两步法应用：
-#   1) 上游 10_enable 补丁排除上述 4 个文件后应用（其余文件干净命中）
-#   2) 应用本仓库维护的 susfs_drift_fixes.patch（4 个漂移文件基于
-#      FinaSU master 的重新适配，包含上游这 4 个文件的全部改动，
-#      并保留 master 新特性：avc_spoof 初始化、动态管理器初始化、
-#      SECOND_SIGNATURE_RELEASE 版本标志）
+# FinaSU master 相对补丁基准存在两类漂移：
+#   1) kernel/runtime/ksud_integration.c 缺少上游后续合入的一行注释
+#      （"after apply_kernelsu_rules..."，位于 second_stage 分支内），
+#      导致 10_enable 补丁的 @@ -147 hunk 上下文无法命中 —— 步骤 0 先对齐。
+#   2) kernel/core/init.c、kernel/feature/selinux_hide.c、
+#      kernel/runtime/boot_event.c、kernel/supercall/dispatch.c 四个文件
+#      在 FinaSU 内有自有特性（dynamic manager、avc_spoof、app_profile
+#      init 等），无法直接套用上游补丁 —— 步骤 1 排除这四个文件，
+#      步骤 2 应用本仓库维护的 susfs_drift_fixes.patch（基于
+#      susfs4ksu 同步官方 KernelSU 后的 post-patch 形态与 FinaSU master
+#      的三方合并重新适配，保留 FinaSU 自有特性）。
 #
 # FinaSU 上游结构变化导致任一步失败时，需要基于新 master 重新生成
 # susfs_drift_fixes.patch（重新执行三方合并并解决冲突）。
@@ -42,6 +41,19 @@ DRIFT_FILES=(
 [ -f "$DRIFT_PATCH" ] || { echo "::error::未找到 FinaSU drift-fixes 补丁: $DRIFT_PATCH"; exit 1; }
 [ -d "$KSU_DIR/.git" ] || { echo "::error::$KSU_DIR 不是 git 仓库检出，无法应用补丁"; exit 1; }
 
+# ---- 步骤 0: 对齐 ksud_integration.c 的上游注释漂移 ----
+# susfs4ksu 同步官方 KernelSU 后，10_enable 补丁的 second_stage hunk
+# 期望 ksud_integration.c 在 ksu_feature_apply_forced() 之上有该注释行；
+# FinaSU master 尚未合入对应上游提交时由此补齐（幂等）。
+KSUD_INTEG="$KSU_DIR/kernel/runtime/ksud_integration.c"
+if [ -f "$KSUD_INTEG" ] \
+  && ! grep -q "after apply_kernelsu_rules, so that selinux_hide has its sepolicy backup" "$KSUD_INTEG"; then
+  echo "步骤 0/2: 对齐 ksud_integration.c 的 second_stage 注释（上游漂移）..."
+  sed -i 's/^            ksu_feature_apply_forced();$/            \/\/ after apply_kernelsu_rules, so that selinux_hide has its sepolicy backup\n            ksu_feature_apply_forced();/' "$KSUD_INTEG"
+  grep -q "after apply_kernelsu_rules, so that selinux_hide has its sepolicy backup" "$KSUD_INTEG" \
+    || { echo "::error::ksud_integration.c 注释对齐失败（ksu_feature_apply_forced 行不存在或缩进变化）"; exit 1; }
+fi
+
 EXCLUDES=()
 for f in "${DRIFT_FILES[@]}"; do
   EXCLUDES+=(--exclude="$f")
@@ -60,8 +72,13 @@ grep -q "config KSU_SUSFS" "$KSU_DIR/kernel/Kconfig" \
   || fail "Kconfig 缺少 KSU_SUSFS 配置声明，10_enable 补丁未正确应用"
 grep -q "susfs_init" "$KSU_DIR/kernel/core/init.c" \
   || fail "init.c 缺少 susfs_init 调用，drift-fixes 应用不完整"
-grep -q "extern void security_dump_masked_av_fn" "$KSU_DIR/kernel/feature/selinux_hide.c" \
-  || fail "selinux_hide.c 缺少 susfs extern 符号声明，drift-fixes 应用不完整"
+grep -q "ksu_handle_sys_reboot" "$KSU_DIR/kernel/supercall/dispatch.c" \
+  || fail "dispatch.c 缺少 ksu_handle_sys_reboot（SUSFS 手动钩子入口），drift-fixes 应用不完整"
+grep -q "ksu_selinux_hide_drop_backup_if_unused" "$KSU_DIR/kernel/feature/selinux_hide.c" \
+  || fail "selinux_hide.c 缺少 backup 释放接口，drift-fixes 应用不完整"
+if grep -qE 'find_kernel_symbol_exact|patch_text' "$KSU_DIR/kernel/feature/selinux_hide.c"; then
+  fail "selinux_hide.c 仍包含 inline hook 机器（resolver/patch_text），drift-fixes 应用不完整"
+fi
 if grep -qE 'kernelsu-objs \+= hook/(lsm_hook|syscall_event_bridge|syscall_hook_manager|tp_marker)' "$KSU_DIR/kernel/Kbuild"; then
   fail "Kbuild 仍包含 inline syscall hook 对象，10_enable 补丁未正确应用"
 fi
