@@ -1182,17 +1182,14 @@ runs:
           fi
         fi
 
-        UAPI_H="$KSU_FOLDER/kernel/include/uapi/supercall.h"
-        if [ -f "$UAPI_H" ] && grep -q "KERNEL_SU_UAPI_VERSION, 2)" "$UAPI_H"; then
-          MAIN_UAPI="$(curl -sL --max-time 30 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/uapi/supercall.h" 2>/dev/null | grep -oE 'KERNEL_SU_UAPI_VERSION = [0-9]+' | awk '{print $3}' | head -n1 || true)"
-          MAIN_UAPI="${MAIN_UAPI:-5}"
-          case "$MAIN_UAPI" in
-            ''|*[!0-9]*) MAIN_UAPI=5 ;;
-          esac
-          if [ "$MAIN_UAPI" -gt 2 ]; then
-            sed -i "s/DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 2)/DECLARE(__u32, KERNEL_SU_UAPI_VERSION, ${MAIN_UAPI})/" "$UAPI_H"
-            echo "🔧 compat: KERNEL_SU_UAPI_VERSION synced to upstream main ($MAIN_UAPI) so the manager matches the kernel"
-          fi
+        # 3b) Dynamic UAPI sync (scripts/susfs_compat/sync_uapi.sh): fetch the
+        #     upstream main uapi/supercall.h, port missing constants/structs into
+        #     the builtin checkout and raise KERNEL_SU_UAPI_VERSION to match;
+        #     for UAPI >= 6 also wire the kernel side (infra/symbol_resolver,
+        #     do_lookup_symbols handler). Content-guarded and idempotent, so
+        #     future upstream UAPI bumps (7, 8, ...) are picked up automatically.
+        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" ]; then
+          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" "$KSU_FOLDER"
         fi
 
         # 4) builtin 分支合入 PR #3871（pkg_observer 延迟 track_throne 到 task_work）时，
