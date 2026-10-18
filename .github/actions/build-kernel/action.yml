@@ -1375,6 +1375,26 @@ runs:
         # in-tree 集成：软链驱动目录并挂载 Makefile / Kconfig
         DRIVER_DIR="$COMMON_KERNEL_FOLDER/drivers"
         ln -sfn "$(realpath --relative-to="$DRIVER_DIR" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
+        # FinaSU 把 UAPI 头文件放在仓库根目录 uapi/，内核源码里按 "uapi/xxx.h" 引用
+        # （allowlist.h / dispatch.c / dynamic_manager.c 等）。in-tree 集成只软链了
+        # KernelSU/kernel，drivers/kernelsu/uapi 不存在 → 编译报
+        # "fatal error: 'uapi/app_profile.h' file not found"。
+        # 在 kernel/ 下补一个指向仓库 uapi/ 的相对软链，让 -I$(KSU_KERNEL_DIR)
+        # 能解析这些引用；老版本树没有根 uapi/ 时自动跳过。
+        if [ -d KernelSU/uapi ] && [ ! -e KernelSU/kernel/uapi ]; then
+          ln -s ../uapi KernelSU/kernel/uapi
+          echo "Linked KernelSU/uapi -> KernelSU/kernel/uapi for in-tree build"
+        fi
+        # 6.12 树上 drivers/kernelsu/include 的 -I 未生效（klog.h / arch.h / util.h
+        # 走 "klog.h" 形式引用会 fatal error not found），而 -I$(KSU_KERNEL_DIR)
+        # 本身是可用的。把 include/ 下的头文件在驱动根目录补一层同名软链，
+        # 让两种引用形式都能落到同一份头文件上；已存在同名文件时不动。
+        for h in KernelSU/kernel/include/*.h; do
+          [ -e "$h" ] || continue
+          hbase="$(basename "$h")"
+          [ -e "KernelSU/kernel/$hbase" ] || ln -s "include/$hbase" "KernelSU/kernel/$hbase"
+        done
+        echo "KernelSU headers: $(ls KernelSU/kernel/include/*.h 2>/dev/null | wc -l) in include/, klog.h root link: $(readlink KernelSU/kernel/klog.h 2>/dev/null || echo none)"
         # 先补一个空行再追加：部分 vendor 树（如 mt6835 n6x）的 drivers/Makefile
         # 末行没有换行符，直接 append 会把 kernelsu 条目拼进上一行而被静默丢弃
         grep -q "obj-.*CONFIG_KSU.*kernelsu/" "$DRIVER_DIR/Makefile" || \
@@ -1541,7 +1561,17 @@ runs:
           fi
         fi
         
-        patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
+        # 内核侧 SUSFS 主补丁统一走 compat 应用器：
+        #   5.15 厂商分支删掉了 susfs 补丁 hunk 依赖的 vendor hook 头文件
+        #   （fs/namespace.c 的 trace/hooks/blk.h、fs/proc/task_mmu.c 的
+        #   trace/hooks/mm.h），整块 hunk 会被 patch 丢弃 —— 连带 namespace.c
+        #   的 CL_COPY_MNT_NS 定义一起丢，编译必失败；6.12 的 fs/exec.c 少了
+        #   dma-buf.h，show_smap/show_smaps_rollup 也被 page-size-migration
+        #   重构，3 个 hunk 无法定位。脚本负责上下文垫片、hunk 重适配和
+        #   结果校验，任何未修复的冲突都会显式报错而不是静默产出坏内核。
+        bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_kernel_susfs_patch.sh" \
+          "$COMMON_KERNEL_FOLDER" \
+          "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
         
         # SUSFS's OPEN_REDIRECT code unconditionally calls VMA_PAD_START(), which
         # only exists on GKI branches that carry Google's page-size-migration
