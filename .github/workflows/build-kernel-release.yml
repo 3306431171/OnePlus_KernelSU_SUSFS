@@ -97,6 +97,8 @@ jobs:
         with:
           sparse-checkout: |
             configs/
+            config/
+            scripts/
           sparse-checkout-cone-mode: false
 
       - name: 🔍 Generate build matrix
@@ -124,6 +126,7 @@ jobs:
               exit 1
               ;;
           esac
+
           ksu_options_normalized=$(jq -nc --arg type "$ksu_variant" --arg hash "$ksu_hash" '[{"type":$type,"hash":$hash}]')
           
           echo "ksu_options_normalized=$ksu_options_normalized" >> $GITHUB_OUTPUT
@@ -290,6 +293,7 @@ jobs:
           )
 
           # 与自定义构建一致：固定使用 susfs4ksu 对应 GKI 分支的最新提交
+          # （config/config 锁定具体提交时改用锁定的 hash）
           mapfile -t active_keys < <(
             echo "$merged_matrix" \
               | jq -r '.[] | select(.susfs == true) | "\(.android_version)-\(.kernel_version)"' \
@@ -298,11 +302,27 @@ jobs:
 
           echo "🔍 Resolving SUSFS hashes for: ${active_keys[*]:-none}"
 
+          # config/config 自定义提交：custom=true 时按 GKI 分支名读取锁定 hash
+          CUSTOM_COMMIT_ENABLED=false
+          if [ -f "scripts/custom_commit.sh" ] && bash scripts/custom_commit.sh enabled 2>/dev/null; then
+            CUSTOM_COMMIT_ENABLED=true
+            echo "📌 config/config detected: custom=true (pinned commits take priority)"
+          fi
+
           declare -A susfs_hashes
           declare -A susfs_versions_per_key
 
           for key in "${active_keys[@]}"; do
             user_val="${default_branches[$key]}"
+
+            # 锁定提交优先：跳过分支解析，直接使用 config 中的 hash
+            if [ "$CUSTOM_COMMIT_ENABLED" = "true" ]; then
+              pinned="$(bash scripts/custom_commit.sh get "$user_val" || true)"
+              if [ -n "$pinned" ]; then
+                echo "  📌 $key pinned to $pinned (config/config)"
+                user_val="$pinned"
+              fi
+            fi
             
             # Build GraphQL query — include blob fetch only when releasing
             HASH_QUERY="{ project(fullPath: \"${GITLAB_PROJECT_PATH}\") { repository { ch: commit(ref: \"${user_val}\") { sha } } } }"

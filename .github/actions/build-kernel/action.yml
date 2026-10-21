@@ -946,6 +946,18 @@ runs:
             SUSFS_BRANCH="$SUSFS_INPUT"
             echo "🔧 Using resolved SUSFS ref: $SUSFS_BRANCH"
           fi
+
+          # config/config 自定义提交优先：custom=true 且对应分支填有 40 位 hash 时
+          # 固定使用该提交（回退到稳定版本 / 规避上游兼容性问题）
+          SUSFS_PINNED=""
+          if [ -f "$GITHUB_WORKSPACE/scripts/custom_commit.sh" ] && \
+             bash "$GITHUB_WORKSPACE/scripts/custom_commit.sh" enabled 2>/dev/null; then
+            SUSFS_PINNED="$(bash "$GITHUB_WORKSPACE/scripts/custom_commit.sh" get "$SUSFS_BRANCH" || true)"
+          fi
+          if [ -n "$SUSFS_PINNED" ]; then
+            SUSFS_BRANCH="$SUSFS_PINNED"
+            echo "📌 config/config: SUSFS pinned to $SUSFS_BRANCH"
+          fi
         fi
         
         retry_fetch_archive() {
@@ -1040,6 +1052,34 @@ runs:
 
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
+          # config/config 锁定具体提交时改走定向 git 获取：GitLab 归档接口
+          # （/-/archive/<ref>/）只接受分支/标签名，传 40 位 SHA 会返回 403，
+          # 而 toolchain-cache 只有分支归档（susfs-<branch>.tar.gz），因此
+          # 直接 fetch 该提交（--depth 1 浅取，体积与归档相当）。
+          if [[ "$SUSFS_BRANCH" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "📌 Pinned SUSFS commit from config/config: $SUSFS_BRANCH"
+            rm -rf "$SUSFS_FOLDER"
+            PIN_OK=false
+            for ATTEMPT in 1 2 3; do
+              echo "🔄 SUSFS pinned-commit fetch attempt $ATTEMPT/3..."
+              rm -rf "$SUSFS_FOLDER"
+              mkdir -p "$SUSFS_FOLDER"
+              if git -C "$SUSFS_FOLDER" init -q . && \
+                 git -C "$SUSFS_FOLDER" remote add origin "https://gitlab.com/simonpunk/susfs4ksu.git" && \
+                 git -C "$SUSFS_FOLDER" fetch -q --depth 1 origin "$SUSFS_BRANCH" && \
+                 git -C "$SUSFS_FOLDER" checkout -q FETCH_HEAD; then
+                echo "✅ SUSFS pinned commit fetched: $SUSFS_BRANCH"
+                PIN_OK=true
+                break
+              fi
+              echo "⚠️ attempt $ATTEMPT/3 failed for pinned commit $SUSFS_BRANCH"
+              sleep 5
+            done
+            if [ "$PIN_OK" != "true" ]; then
+              echo "::error::Failed to fetch pinned SUSFS commit $SUSFS_BRANCH from GitLab. Check that the hash in config/config exists on simonpunk/susfs4ksu."
+              exit 1
+            fi
+          else
           # 优先从本仓库 toolchain-cache 下载 SUSFS 归档（mirror 预缓存），
           # 避免全部矩阵 job 并发请求 GitLab 归档接口被限流；缓存缺失才回退 GitLab
           # 下载链：aria2c 多连接（快）→ curl 单连接（稳，规避 CDN 对多连接的间歇拒绝）→ GitLab
@@ -1087,6 +1127,7 @@ runs:
               echo "::error::Failed to fetch SUSFS archive after multiple attempts"
               exit 1
             fi
+          fi
           fi
           echo "SUSFS_COMMIT_SHA=$SUSFS_BRANCH" >> $GITHUB_ENV
           SUSFS_COMMIT_DATE=$(git -C "$SUSFS_FOLDER" log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo "unknown")

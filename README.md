@@ -59,7 +59,30 @@ This repository builds **OnePlus (Oppo/Realme) device kernels** with GitHub Acti
 4. Once the build finishes, download the **Artifacts** from the run page:
    - `AnyKernel3.zip` — flashable zip (recommended; flash via custom Recovery or KSU manager)
 
-> 💡 SUSFS refs are resolved automatically from [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (latest `gki-androidXX-Y.Y` branch commit) — no manual input required.
+> 💡 SUSFS refs are resolved automatically from [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (latest `gki-androidXX-Y.Y` branch commit) — no manual input required. To pin a specific commit instead, see [Custom Commit Configuration](#-custom-commit-configuration).
+
+## 🔧 Custom Commit Configuration
+
+The [`config/config`](config/config) file lets you pin SUSFS to specific commits.
+
+**What is a commit?**
+
+A commit is a hash string representing the state of a repository at a certain point in time. For example, setting SUSFS to `4b8644515fe6d87a109129e590ccd9d33a855dca` means the kernel will be built with the SUSFS version from January 30.
+
+**Why pin a commit?**
+
+- Roll back to a stable version when upstream updates introduce bugs or compatibility issues
+- Manually specify a compatible version when SUSFS and KernelSU are out of sync and the build fails
+
+**How to use it?**
+
+1. Set `custom=true` in [`config/config`](config/config)
+2. Fill in the desired commit hash next to the matching entry (one entry per GKI branch)
+3. Leave an entry empty to keep using the latest commit of that branch
+
+**How to get a commit hash?**
+
+- SUSFS: [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (GitLab → Repository → Commits)
 
 ## 🙏 Acknowledgments
 
@@ -152,7 +175,30 @@ This repository builds **OnePlus (Oppo/Realme) device kernels** with GitHub Acti
 4. 构建完成后，在本次运行页面下载 **Artifacts**：
    - `AnyKernel3.zip` —— 卡刷包（推荐，配合自定义 Recovery 或 KSU 管理器刷入）
 
-> 💡 SUSFS 引用自动从 [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) 解析（对应 `gki-androidXX-Y.Y` 分支最新提交），无需手动填写。
+> 💡 SUSFS 引用自动从 [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) 解析（对应 `gki-androidXX-Y.Y` 分支最新提交），无需手动填写。如需固定某个提交，见 [自定义提交配置](#-自定义提交配置)。
+
+## 🔧 自定义提交配置
+
+通过 [`config/config`](config/config) 文件可以指定 SUSFS 使用特定的 commit。
+
+**什么是提交 (commit)？**
+
+提交是一串哈希字符串，代表仓库在某个时间点的状态。例如将 SUSFS 设为 `4b8644515fe6d87a109129e590ccd9d33a855dca`，即使用 1 月 30 日的 SUSFS 版本编译内核。
+
+**为什么要指定提交？**
+
+- 当上游仓库更新引入 bug 或兼容性问题时，可回退到稳定版本
+- 当 SUSFS 与 KernelSU 版本不同步导致编译失败时，可手动指定兼容的版本
+
+**如何使用？**
+
+1. 在 [`config/config`](config/config) 中将 `custom` 设为 `true`
+2. 在对应配置项后填入想要的 commit hash（按 GKI 分支填写，每个分支一项）
+3. 留空表示使用该分支的最新提交
+
+**如何获取提交哈希？**
+
+- SUSFS：[susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu)（GitLab → Repository → Commits）
 
 ## 🙏 致谢
 

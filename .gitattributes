@@ -1,0 +1,7 @@
+# Shell scripts are executed by bash in CI: a stray CR breaks the shebang and
+# command parsing, so force LF on checkout regardless of the platform's
+# autocrlf setting.
+*.sh text eol=lf
+
+# config/config is parsed line-by-line by scripts/custom_commit.sh
+config/config text eol=lf
