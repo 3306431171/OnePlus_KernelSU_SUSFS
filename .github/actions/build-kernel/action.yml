@@ -1276,6 +1276,21 @@ runs:
         if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" ]; then
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" "$KSU_FOLDER"
         fi
+
+        # 7) preinit runner 的规则以 $(KSU_KERNEL_DIR)/preinit/runner/runner.c 作前置条件。
+        #    6.12 GKI 树上 $(srctree) 是相对路径，KSU_KERNEL_DIR 会算成 "../../drivers/kernelsu"，
+        #    make 解析该前置条件失败：
+        #      No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
+        #    源码在树内时 $(obj) 即源目录，故加兜底：KSU_KERNEL_DIR 看不到该文件就回退到 $(obj)。
+        #    $(wildcard) 判定，5.10/5.15/6.1 命中原路径，规则保持不变。
+        KSU_MK="$KSU_FOLDER/kernel/Makefile"
+        if [ -f "$KSU_MK" ] \
+           && grep -q '^\$(obj)/preinit/runner\.elf: \$(KSU_KERNEL_DIR)/preinit/runner/runner\.c ' "$KSU_MK" \
+           && ! grep -q 'preinit/runner\.elf: \$(if \$(wildcard' "$KSU_MK"; then
+          sed -i 's|^\$(obj)/preinit/runner\.elf: \$(KSU_KERNEL_DIR)/preinit/runner/runner\.c \\$|$(obj)/preinit/runner.elf: $(if $(wildcard $(KSU_KERNEL_DIR)/preinit/runner/runner.c),$(KSU_KERNEL_DIR),$(obj))/preinit/runner/runner.c \\|' "$KSU_MK"
+          echo "🔧 compat: preinit runner prerequisite falls back to \$(obj) when KSU_KERNEL_DIR cannot see it"
+        fi
+
         cd KernelSU/kernel
 
         # SukiSU Kbuild 自动计算版本 (40000 + REPO_BRANCH 指向分支的提交数 - 2815)
