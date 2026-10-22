@@ -470,11 +470,31 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Install dependencies"
-          sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git curl ca-certificates build-essential clang lld flex bison \
-            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
-            libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz
+          sudo apt-get -o Acquire::Retries=3 update -qq || sudo apt-get -o Acquire::Retries=3 update
+
+          # ubuntu-latest 已切到 26.04：liblz4-tool 过渡包被移除，直接安装 lz4
+          PKGS="git curl ca-certificates build-essential clang lld flex bison
+                libelf-dev libssl-dev libncurses-dev zlib1g-dev lz4
+                libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz"
+
+          if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS; then
+            echo "::warning::bulk install failed, retrying one package at a time"
+            MISSING=""
+            for p in $PKGS; do
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p" \
+                || { echo "::warning::unavailable in this image: $p"; MISSING="$MISSING $p"; }
+            done
+            if [ -n "$MISSING" ]; then
+              echo "::warning::skipped packages:$MISSING"
+            fi
+          fi
+
+          # 旧镜像（<=24.04）里 lz4 CLI 由 liblz4-tool 提供，兜底补装
+          if ! command -v lz4 >/dev/null 2>&1; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends liblz4-tool || true
+          fi
+          command -v lz4 >/dev/null 2>&1 || { echo "::error::lz4 is required but unavailable in this image"; exit 1; }
+
           sudo apt-get clean
           echo "✅ Dependencies installed"
           echo "::endgroup::"
