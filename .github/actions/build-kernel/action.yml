@@ -2602,6 +2602,30 @@ runs:
           echo ""
         fi
         
+        # ---------------------------------------------------------------
+        # host 工具链兼容：Ubuntu 26.04 runner 的 glibc(>=2.42) 给 strchr()/strstr()
+        # 引入了 const 保留重载，strchr(const char *, int) 现在返回 const char *。
+        # 6.x 内核 tools/lib/bpf/libbpf.c 中把结果赋给 char * 的语句因此触发
+        #     -Werror,-Wincompatible-pointer-types-discards-qualifiers
+        # 使 resolve_btfids（BTF 编译必需）失败，6.1/6.6/6.12 全系设备挂掉。
+        # 对两条已知语句补显式 cast：幂等，5.10/5.15 无这些语句时自动跳过。
+        LIBBPF_PATCHED=0
+        while IFS= read -r LIBBPF_SRC; do
+          [ -n "$LIBBPF_SRC" ] || continue
+          LIBBPF_BEFORE=$(md5sum "$LIBBPF_SRC" | cut -d' ' -f1)
+          sed -i -E \
+            -e "s/^([[:space:]]*)next_path[[:space:]]*=[[:space:]]*strchr\(s,[[:space:]]*':'\);/\1next_path = (char *)strchr(s, ':');/" \
+            -e "s/^([[:space:]]*)res[[:space:]]*=[[:space:]]*strstr\(sym_name,[[:space:]]*\"\.llvm\.\"\);/\1res = (char *)strstr(sym_name, \".llvm.\");/" \
+            "$LIBBPF_SRC"
+          LIBBPF_AFTER=$(md5sum "$LIBBPF_SRC" | cut -d' ' -f1)
+          if [ "$LIBBPF_BEFORE" != "$LIBBPF_AFTER" ]; then
+            echo "🩹 const-preserving strchr/strstr patched: ${LIBBPF_SRC#"$COMMON_KERNEL_FOLDER"/}"
+            LIBBPF_PATCHED=$((LIBBPF_PATCHED + 1))
+          fi
+        done <<< "$(find "$COMMON_KERNEL_FOLDER" -maxdepth 6 -type f -path '*/tools/lib/bpf/libbpf.c' 2>/dev/null)"
+        echo "🩹 libbpf.c host-tool patches applied: $LIBBPF_PATCHED file(s)"
+        # ---------------------------------------------------------------
+
         BUILD_START=$(date +%s)
         set -o pipefail
 
