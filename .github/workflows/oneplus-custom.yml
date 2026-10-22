@@ -459,7 +459,9 @@ jobs:
       !cancelled() &&
       needs.set-matrix.result == 'success' &&
       (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
-    runs-on: ubuntu-latest
+    # 钉在 24.04：ZyC / Android 预编译工具链依赖旧 glibc 与 libxml2.so.2，
+    # ubuntu-latest 滚到 26.04 后这些二进制在 kconfig 阶段即失败。
+    runs-on: ubuntu-24.04
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v6
@@ -509,11 +511,16 @@ jobs:
             done
           fi
           if ! ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2'; then
-            POOL="http://archive.ubuntu.com/ubuntu/pool/main/libx/libxml2"
+            echo "::group::Fetch legacy libxml2.so.2"
+            POOL="https://archive.ubuntu.com/ubuntu/pool/main/libx/libxml2"
             TMPD=$(mktemp -d)
             GOT=0
-            for deb in $(curl -fsSL "$POOL/" 2>/dev/null | grep -oE 'libxml2_[0-9][^"]*_amd64\.deb' | sort -u | head -n 6); do
-              if curl -fsSL -o "$TMPD/l.deb" "$POOL/$deb" 2>/dev/null && dpkg-deb -x "$TMPD/l.deb" "$TMPD/root" 2>/dev/null; then
+            LIST=$(curl -fsSL --connect-timeout 10 --max-time 40 "$POOL/" 2>/dev/null \
+                   | grep -oE 'libxml2_[0-9][^"]*_amd64\.deb' | sort -u | head -n 8 || true)
+            for deb in $LIST; do
+              echo "trying $deb"
+              if curl -fsSL --connect-timeout 10 --max-time 60 -o "$TMPD/l.deb" "$POOL/$deb" 2>/dev/null \
+                 && dpkg-deb -x "$TMPD/l.deb" "$TMPD/root" 2>/dev/null; then
                 if compgen -G "$TMPD/root/usr/lib/x86_64-linux-gnu/libxml2.so.2*" >/dev/null; then
                   sudo cp -a "$TMPD/root/usr/lib/x86_64-linux-gnu/"libxml2.so.2* /usr/local/lib/
                   sudo ldconfig
@@ -524,9 +531,8 @@ jobs:
               fi
             done
             rm -rf "$TMPD"
-            if [ "$GOT" = "0" ]; then
-              echo "::warning::legacy libxml2.so.2 unavailable; prebuilt ld.lld may fail"
-            fi
+            [ "$GOT" = "1" ] || echo "::warning::legacy libxml2.so.2 unavailable; prebuilt ld.lld may fail"
+            echo "::endgroup::"
           fi
 
           sudo apt-get clean
