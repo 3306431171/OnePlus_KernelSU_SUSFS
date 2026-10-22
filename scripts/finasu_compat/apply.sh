@@ -9,16 +9,20 @@
 # 步骤 1 排除这些文件，步骤 2 应用本仓库维护的 susfs_drift_fixes.patch
 # （基于 susfs4ksu 同步官方 KernelSU 后的 post-patch 形态与 FinaSU master
 # 的三方合并重新适配，保留 FinaSU 自有特性：dynamic manager、avc_spoof、
-# app_profile init、late-load、module preinit、KSU_GET_INFO_FLAG_* 等）。
+# app_profile init、late-load、module preinit、uts_view、KSU_GET_INFO_FLAG_* 等）。
 #
-# 当前漂移文件集（10_enable 基准 9a0fd7d3 → master 40c97e24 期间上游重构）：
+# 当前漂移文件集（10_enable 基准 9a0fd7d3 → master ef67206b 期间上游重构）：
 #   kernel/Makefile                  （format 目标重构为 FORMAT_FILES 变量）
 #   kernel/Kbuild                    （preinit runner 依赖 ksu_syscall_table 直调，
 #                                      SUSFS 手动钩子模式下强制 KSU_NO_PREINIT 禁用）
-#   kernel/core/init.c               （late-load 双分支骨架 + preinit）
+#   kernel/core/init.c               （late-load 双分支骨架 + preinit + uts_view init）
 #   kernel/feature/selinux_hide.c    （inline hook 机器整体替换为 SUSFS 手动钩子）
 #   kernel/feature/sucompat.c        （userspace_stack_buffer 移入 util.h、
 #                                      su_compat_handler 注册等）
+#   kernel/hook/setuid_hook.c        （master 的 localized UTS view spoofing 在
+#                                      ksu_handle_setresuid 里插入了 uts_view 调用，
+#                                      10_enable 的整段重写无法定位；重适配到
+#                                      SUSFS 手动钩子的 handle_zygote_setresuid 入口）
 #   kernel/include/ksu.h             （恢复 10_enable 误删的 ksu_late_loaded 声明，
 #                                      master 的 late-load/get_info 代码仍依赖它）
 #   kernel/runtime/boot_event.c      （input hook static key 化）
@@ -47,6 +51,7 @@ DRIFT_FILES=(
   kernel/core/init.c
   kernel/feature/selinux_hide.c
   kernel/feature/sucompat.c
+  kernel/hook/setuid_hook.c
   kernel/include/ksu.h
   kernel/runtime/boot_event.c
   kernel/runtime/ksud_integration.c
@@ -97,6 +102,15 @@ grep -q 'ccflags-y += -DKSU_NO_PREINIT' "$KSU_DIR/kernel/Kbuild" \
   || fail "Kbuild 缺少 KSU_NO_PREINIT 强制禁用（preinit 依赖 ksu_syscall_table，SUSFS 模式必须禁用）"
 if grep -qE 'kernelsu-objs \+= preinit/' "$KSU_DIR/kernel/Kbuild"; then
   fail "Kbuild 仍编译 preinit 对象（其 ksu_syscall_table 引用将导致链接失败）"
+fi
+grep -q 'kernelsu-objs += feature/uts_view.o' "$KSU_DIR/kernel/Kbuild" \
+  || fail "Kbuild 缺少 uts_view 对象（FinaSU localized UTS view spoofing 特性丢失）"
+grep -q 'ksu_uts_view_init()' "$KSU_DIR/kernel/core/init.c" \
+  || fail "init.c 缺少 ksu_uts_view_init 调用（FinaSU uts_view 特性丢失）"
+grep -q 'ksu_uts_view_on_setresuid(' "$KSU_DIR/kernel/hook/setuid_hook.c" \
+  || fail "setuid_hook.c 缺少 uts_view 回调（FinaSU uts_view 特性丢失）"
+if grep -qE 'ksu_uts_view_on_setresuid\(old_uid' "$KSU_DIR/kernel/hook/setuid_hook.c"; then
+  fail "setuid_hook.c 仍使用 ksu_handle_setresuid 的 old_uid/new_uid（SUSFS 模式下未定义，编译必失败）"
 fi
 
 REJS=$(find "$KSU_DIR/kernel" -name '*.rej' 2>/dev/null | wc -l)
