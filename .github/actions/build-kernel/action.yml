@@ -1277,18 +1277,18 @@ runs:
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" "$KSU_FOLDER"
         fi
 
-        # 7) preinit runner 的规则以 $(KSU_KERNEL_DIR)/preinit/runner/runner.c 作前置条件。
-        #    6.12 GKI 树上 $(srctree) 是相对路径，KSU_KERNEL_DIR 会算成 "../../drivers/kernelsu"，
-        #    make 解析该前置条件失败：
+        # 7) 6.12 GKI 树上 kbuild 给出的 $(src) 已经是 "../drivers/kernelsu"，Makefile 里
+        #    "KSU_KERNEL_DIR := $(srctree)/$(src)" 会再拼一层 srctree，得到
+        #    "../../drivers/kernelsu"，于是 preinit runner 全链路失败：
         #      No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
-        #    源码在树内时 $(obj) 即源目录，故加兜底：KSU_KERNEL_DIR 看不到该文件就回退到 $(obj)。
-        #    $(wildcard) 判定，5.10/5.15/6.1 命中原路径，规则保持不变。
+        #      runner.c:15:10: fatal error: 'nolibc.h' file not found
+        #    改成用 $(wildcard) 判断：拼出来的路径看得到 runner.c 才用它，否则直接用 $(src)。
+        #    5.10/5.15/6.1 命中前者，取值与原来一致。
         KSU_MK="$KSU_FOLDER/kernel/Makefile"
         if [ -f "$KSU_MK" ] \
-           && grep -q '^\$(obj)/preinit/runner\.elf: \$(KSU_KERNEL_DIR)/preinit/runner/runner\.c ' "$KSU_MK" \
-           && ! grep -q 'preinit/runner\.elf: \$(if \$(wildcard' "$KSU_MK"; then
-          sed -i 's|^\$(obj)/preinit/runner\.elf: \$(KSU_KERNEL_DIR)/preinit/runner/runner\.c \\$|$(obj)/preinit/runner.elf: $(if $(wildcard $(KSU_KERNEL_DIR)/preinit/runner/runner.c),$(KSU_KERNEL_DIR),$(obj))/preinit/runner/runner.c \\|' "$KSU_MK"
-          echo "🔧 compat: preinit runner prerequisite falls back to \$(obj) when KSU_KERNEL_DIR cannot see it"
+           && grep -q '^KSU_KERNEL_DIR := \$(srctree)/\$(src)$' "$KSU_MK"; then
+          sed -i 's|^KSU_KERNEL_DIR := \$(srctree)/\$(src)$|KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))|' "$KSU_MK"
+          echo "🔧 compat: KSU_KERNEL_DIR no longer double-prefixes \$(srctree) on 6.12 trees"
         fi
 
         cd KernelSU/kernel
