@@ -1204,12 +1204,19 @@ runs:
         #    though the interfaces (report_event etc.) already exist; sync the declared
         #    value from upstream main so the manager stops showing "kernel update required".
         NETLINK_H="$COMMON_KERNEL_FOLDER/include/linux/netlink.h"
-        SU_SUPER="$KSU_FOLDER/kernel/kpm/super_access.c"
-        if [ -f "$NETLINK_H" ] && [ -f "$SU_SUPER" ]; then
-          if ! grep -q "cb_mutex" "$NETLINK_H" && grep -q "DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)" "$SU_SUPER"; then
-            sed -i '/DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)/d' "$SU_SUPER"
-            echo "🔧 compat: dropped DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex) (member removed in this kernel tree)"
-          fi
+        if [ -f "$NETLINK_H" ] && ! grep -q "cb_mutex" "$NETLINK_H"; then
+          # builtin 新布局把 kpm 从 kernel/kpm 挪到 kernel/extension/kpm；只认旧路径会让
+          # 这段兼容静默失效（6.12 全部在 super_access.c 编译失败）。两种路径都扫。
+          KPM_PATCHED=0
+          while IFS= read -r SU_SUPER; do
+            [ -n "$SU_SUPER" ] || continue
+            if grep -q "DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)" "$SU_SUPER"; then
+              sed -i '/DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)/d' "$SU_SUPER"
+              echo "🔧 compat: dropped DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex) in ${SU_SUPER#"$KSU_FOLDER"/} (member removed in this kernel tree)"
+              KPM_PATCHED=$((KPM_PATCHED + 1))
+            fi
+          done <<< "$(find "$KSU_FOLDER/kernel" -maxdepth 3 -type f -path '*/kpm/super_access.c' 2>/dev/null)"
+          echo "🔧 compat: netlink_kernel_cfg.cb_mutex fixups applied: $KPM_PATCHED"
         fi
 
         LSM_HOOKS_H="$COMMON_KERNEL_FOLDER/include/linux/lsm_hooks.h"
