@@ -1474,7 +1474,7 @@ index fcb88201..b12e8ab9 100644
 -    goto out;
 -}
 diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
-index 003f86b6..8f1bd187 100644
+index 003f86b6..574d8d9d 100644
 --- a/kernel/feature/sucompat.c
 +++ b/kernel/feature/sucompat.c
 @@ -1,6 +1,3 @@
@@ -1541,65 +1541,65 @@ index 003f86b6..8f1bd187 100644
      pr_info("su_compat: set to %d\n", enable);
      return 0;
  }
-@@ -54,6 +67,13 @@ static const struct ksu_feature_handler su_compat_handler = {
+@@ -54,217 +67,194 @@ static const struct ksu_feature_handler su_compat_handler = {
      .set_handler = su_compat_feature_set,
  };
  
+-static char __user *ksud_user_path(void)
 +static char __user *sh_user_path(void)
-+{
-+    static const char sh_path[] = "/system/bin/sh";
-+
-+    return userspace_stack_buffer(sh_path, sizeof(sh_path));
-+}
-+
- static char __user *ksud_user_path(void)
  {
-     static const char ksud_path[] = KSUD_PATH;
-@@ -61,210 +81,201 @@ static char __user *ksud_user_path(void)
-     return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
+-    static const char ksud_path[] = KSUD_PATH;
++    static const char sh_path[] = "/system/bin/sh";
+ 
+-    return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
++    return userspace_stack_buffer(sh_path, sizeof(sh_path));
  }
  
 -static char __user *empty_user_path(void)
-+static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
++static char __user *ksud_user_path(void)
  {
 -    return userspace_stack_buffer("", sizeof(""));
--}
-+    const char __user *native;
++    static const char ksud_path[] = KSUD_PATH;
++
++    return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
+ }
  
 -static const char su_path[] = SU_PATH;
-+#ifdef CONFIG_COMPAT
-+    if (unlikely(argv.is_compat)) {
-+        compat_uptr_t compat;
++/*
++ * return 0 -> No further checks should be required afterwards
++ * return non-zero -> Further checks should be continued afterwards
++ */
++int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user) {
++    int ret;
  
 -static bool is_ksud_exists()
 -{
 -    struct path path;
-+        if (get_user(compat, argv.ptr.compat + nr))
-+            return ERR_PTR(-EFAULT);
++    if (current->pid == 1)
++        return -EINVAL;
  
 -    if (kern_path(KSUD_PATH, 0, &path) < 0) {
 -        return false;
-+        return compat_ptr(compat);
-     }
+-    }
 -    path_put(&path);
 -    return true;
 -}
-+#endif
++    if (!is_init(get_current_cred()))
++        return -EINVAL;
  
 -long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
 -{
 -    const char __user **filename_user, *orig_filename;
 -    long ret;
 -    const struct cred *old_cred;
-+    if (get_user(native, argv.ptr.native + nr))
-+        return ERR_PTR(-EFAULT);
++    if (unlikely(!strcmp(filename->name, KSUD_PATH))) {
++        const char __user *argv_user_ptr = get_user_arg_ptr(*argv_user, 0);
++        struct ksu_sulog_pending_event *pending_sucompat = NULL;
  
 -    if (!ksu_is_allow_uid_for_current(current_uid().val)) {
 -        goto do_orig_facessat;
 -    }
-+    return native;
-+}
- 
+-
 -    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 -
 -    char path[sizeof(su_path) + 1];
@@ -1610,54 +1610,6 @@ index 003f86b6..8f1bd187 100644
 -        old_cred = override_creds(ksu_cred);
 -        if (is_ksud_exists()) {
 -            pr_info("faccessat su->ksud!\n");
--            orig_filename = *filename_user;
--            *filename_user = ksud_user_path();
--            ret = ksu_syscall_table[orig_nr](regs);
--            revert_creds(old_cred);
--            *filename_user = orig_filename;
--            return ret;
--        } else {
--            revert_creds(old_cred);
--        }
--    }
-+/*
-+ * return 0 -> No further checks should be required afterwards
-+ * return non-zero -> Further checks should be continued afterwards
-+ */
-+int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user) {
-+    int ret;
- 
--do_orig_facessat:
--    return ksu_syscall_table[orig_nr](regs);
--}
-+    if (current->pid == 1)
-+        return -EINVAL;
- 
--long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
--{
--    const char __user **filename_user, *orig_filename;
--    long ret;
--    const struct cred *old_cred;
-+    if (!is_init(get_current_cred()))
-+        return -EINVAL;
- 
--    if (!ksu_is_allow_uid_for_current(current_uid().val)) {
--        goto do_orig_stat;
--    }
-+    if (unlikely(!strcmp(filename->name, KSUD_PATH))) {
-+        const char __user *argv_user_ptr = get_user_arg_ptr(*argv_user, 0);
-+        struct ksu_sulog_pending_event *pending_sucompat = NULL;
- 
--    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
--
--    char path[sizeof(su_path) + 1];
--    memset(path, 0, sizeof(path));
--    strncpy_from_user_nofault(path, *filename_user, sizeof(path));
--
--    if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
--        old_cred = override_creds(ksu_cred);
--        if (is_ksud_exists()) {
--            pr_info("newfstatat su->ksud!\n");
 -            orig_filename = *filename_user;
 -            *filename_user = ksud_user_path();
 -            ret = ksu_syscall_table[orig_nr](regs);
@@ -1680,8 +1632,18 @@ index 003f86b6..8f1bd187 100644
 +        return 0;
      }
  
--do_orig_stat:
+-do_orig_facessat:
 -    return ksu_syscall_table[orig_nr](regs);
+-}
+-
+-long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
+-{
+-    const char __user **filename_user, *orig_filename;
+-    long ret;
+-    const struct cred *old_cred;
+-
+-    if (!ksu_is_allow_uid_for_current(current_uid().val)) {
+-        goto do_orig_stat;
 +    if (likely(!strstr(filename->name, "/app_process") && !strstr(filename->name, "/adbd") && !strstr(filename->name, "/stub_zygote"))) {
 +        pr_info("susfs: mark no sucompat checks for pid: '%d', exec: '%s'\n", current->pid, filename->name);
 +        susfs_set_current_proc_no_su();
@@ -1689,8 +1651,28 @@ index 003f86b6..8f1bd187 100644
 +        //   the sus mounts, tho other susfs features still rely on proc_umounted check, but
 +        //   it is fine to not spoof for init spawned processes.
 +        return 0;
-+    }
-+
+     }
+ 
+-    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+-
+-    char path[sizeof(su_path) + 1];
+-    memset(path, 0, sizeof(path));
+-    strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+-
+-    if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
+-        old_cred = override_creds(ksu_cred);
+-        if (is_ksud_exists()) {
+-            pr_info("newfstatat su->ksud!\n");
+-            orig_filename = *filename_user;
+-            *filename_user = ksud_user_path();
+-            ret = ksu_syscall_table[orig_nr](regs);
+-            revert_creds(old_cred);
+-            *filename_user = orig_filename;
+-            return ret;
+-        } else {
+-            revert_creds(old_cred);
+-        }
+-    }
 +#ifdef CONFIG_COMPAT
 +    if (unlikely(envp_user->is_compat))
 +        ret = ksu_adb_root_handle_execveat(filename->name, (void ***)&envp_user->ptr.compat);
@@ -1699,7 +1681,9 @@ index 003f86b6..8f1bd187 100644
 +#else
 +        ret = ksu_adb_root_handle_execveat(filename->name, (void ***)&envp_user->ptr.native);
 +#endif
-+
+ 
+-do_orig_stat:
+-    return ksu_syscall_table[orig_nr](regs);
 +    if (ret)
 +        pr_err("adb root failed: %d\n", ret);
 +
@@ -2133,7 +2117,7 @@ index d7899f8b..cf21131d 100644
  }
  
 diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
-index 8587ccf4..3bef4531 100644
+index 8587ccf4..8517d65f 100644
 --- a/kernel/runtime/ksud_integration.c
 +++ b/kernel/runtime/ksud_integration.c
 @@ -11,7 +11,6 @@
@@ -2160,7 +2144,7 @@ index 8587ccf4..3bef4531 100644
  // clang-format off
  static const char KERNEL_SU_RC[] =
      "\n"
-@@ -51,43 +53,25 @@ static const char KERNEL_SU_RC[] =
+@@ -51,45 +53,6 @@ static const char KERNEL_SU_RC[] =
      "\n";
  // clang-format on
  
@@ -2182,39 +2166,31 @@ index 8587ccf4..3bef4531 100644
 -    } ptr;
 -};
 -
- static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
- {
+-static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
+-{
 -    const char __user *native;
-+	const char __user *native;
- 
- #ifdef CONFIG_COMPAT
+-
+-#ifdef CONFIG_COMPAT
 -    if (unlikely(argv.is_compat)) {
 -        compat_uptr_t compat;
-+	if (unlikely(argv.is_compat)) {
-+		compat_uptr_t compat;
- 
+-
 -        if (get_user(compat, argv.ptr.compat + nr))
 -            return ERR_PTR(-EFAULT);
-+		if (get_user(compat, argv.ptr.compat + nr))
-+			return ERR_PTR(-EFAULT);
- 
+-
 -        return compat_ptr(compat);
 -    }
-+		return compat_ptr(compat);
-+	}
- #endif
- 
+-#endif
+-
 -    if (get_user(native, argv.ptr.native + nr))
 -        return ERR_PTR(-EFAULT);
-+	if (get_user(native, argv.ptr.native + nr))
-+		return ERR_PTR(-EFAULT);
- 
+-
 -    return native;
-+	return native;
- }
- 
+-}
+-
  /*
-@@ -137,7 +121,7 @@ static bool check_argv(struct user_arg_ptr argv, int index, const char *expected
+  * count() counts the number of strings in array ARGV.
+  */
+@@ -137,7 +100,7 @@ static bool check_argv(struct user_arg_ptr argv, int index, const char *expected
      if (!p || IS_ERR(p))
          goto fail;
  
@@ -2223,7 +2199,7 @@ index 8587ccf4..3bef4531 100644
          goto fail;
  
      buf[buf_len - 1] = '\0';
-@@ -148,40 +132,58 @@ fail:
+@@ -148,40 +111,58 @@ fail:
      return false;
  }
  
@@ -2306,7 +2282,7 @@ index 8587ccf4..3bef4531 100644
  }
  
  static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);
-@@ -441,13 +443,16 @@ static void ksu_install_rc_hook(struct file *file)
+@@ -441,13 +422,16 @@ static void ksu_install_rc_hook(struct file *file)
          return;
      }
      rc_hooked = true;
@@ -2325,7 +2301,7 @@ index 8587ccf4..3bef4531 100644
      pr_info("read init.rc, comm: %s, rc_count: %zu, module_rc: %zu\n", current->comm, ksu_rc_len, module_rc_len);
  
      // Now we need to proxy the read and modify the result!
-@@ -466,7 +471,7 @@ static void ksu_install_rc_hook(struct file *file)
+@@ -466,7 +450,7 @@ static void ksu_install_rc_hook(struct file *file)
      file->f_op = &fops_proxy;
  }
  
@@ -2334,7 +2310,7 @@ index 8587ccf4..3bef4531 100644
  {
      struct file *file = fget(fd);
      if (!file) {
-@@ -489,11 +494,13 @@ int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *v
+@@ -489,11 +473,13 @@ int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *v
          int val = *value;
          pr_info("KEY_VOLUMEDOWN val: %d\n", val);
          if (val) {
@@ -2351,7 +2327,7 @@ index 8587ccf4..3bef4531 100644
          }
      }
  
-@@ -508,12 +515,11 @@ bool ksu_is_safe_mode()
+@@ -508,12 +494,11 @@ bool ksu_is_safe_mode()
          return true;
      }
  
@@ -2368,7 +2344,7 @@ index 8587ccf4..3bef4531 100644
  
      pr_info("volumedown_pressed_count: %d\n", volumedown_pressed_count);
      if (is_volumedown_enough(volumedown_pressed_count)) {
-@@ -526,66 +532,13 @@ bool ksu_is_safe_mode()
+@@ -526,66 +511,13 @@ bool ksu_is_safe_mode()
      return false;
  }
  
@@ -2397,8 +2373,7 @@ index 8587ccf4..3bef4531 100644
 -}
 -
 -void ksu_execve_hook_ksud(const struct pt_regs *regs)
-+void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
- {
+-{
 -    const char __user *filename_user = (const char __user *)PT_REGS_SYSCALL_PARM1(regs);
 -    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
 -
@@ -2426,7 +2401,8 @@ index 8587ccf4..3bef4531 100644
 -
 -static long (*orig_sys_fstat)(const struct pt_regs *regs);
 -static long ksu_sys_fstat(const struct pt_regs *regs)
--{
++void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
+ {
 -    unsigned int fd = PT_REGS_SYSCALL_PARM1(regs);
 -    void __user *statbuf = (void __user *)PT_REGS_PARM2(regs);
 +    loff_t orig_size = *kstat_size_ptr;
@@ -2439,7 +2415,7 @@ index 8587ccf4..3bef4531 100644
      if (file) {
          if (is_init_rc(file)) {
              pr_info("stat init.rc");
-@@ -595,85 +548,20 @@ static long ksu_sys_fstat(const struct pt_regs *regs)
+@@ -595,85 +527,20 @@ static long ksu_sys_fstat(const struct pt_regs *regs)
          fput(file);
      }
  
@@ -2460,10 +2436,7 @@ index 8587ccf4..3bef4531 100644
 -        } else {
 -            pr_err("read statbuf 0x%lx failed", (unsigned long)st_size_ptr);
 -        }
-+        extra = ksu_rc_len + module_rc_len;
-+        *kstat_size_ptr = orig_size + extra;
-+        pr_info("adding rc len: %lld -> %lld (static=%zu module=%zu)", orig_size, *kstat_size_ptr, ksu_rc_len, module_rc_len);
-     }
+-    }
 -
 -    return ret;
 -}
@@ -2498,7 +2471,10 @@ index 8587ccf4..3bef4531 100644
 -    static bool input_hook_stopped = false;
 -    if (input_hook_stopped) {
 -        return;
--    }
++        extra = ksu_rc_len + module_rc_len;
++        *kstat_size_ptr = orig_size + extra;
++        pr_info("adding rc len: %lld -> %lld (static=%zu module=%zu)", orig_size, *kstat_size_ptr, ksu_rc_len, module_rc_len);
+     }
 -    input_hook_stopped = true;
 -    bool ret = schedule_work(&stop_input_hook_work);
 -    pr_info("unregister input kprobe: %d!\n", ret);
