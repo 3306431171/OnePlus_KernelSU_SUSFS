@@ -637,8 +637,10 @@ jobs:
           fi
           command -v lz4 >/dev/null 2>&1 || { echo "::error::lz4 is required but unavailable in this image"; exit 1; }
 
-          # ZyC / 部分预编译 ld.lld 动态链接 libxml2.so.2，26.04 精简镜像不带它；
-          # 缺了会在 kconfig 阶段报 "ld.lld: error while loading shared libraries"。
+          # ZyC 等预编译 ld.lld 动态链接旧 SONAME libxml2.so.2；26.04 的 libxml2 2.15
+          # 只提供 libxml2.so.16，缺 .so.2 会在 kconfig 阶段直接崩：
+          #   ld.lld: error while loading shared libraries: libxml2.so.2
+          # 先试发行版包名，再按需从旧版发行版取该库放到 /usr/local/lib（不替换系统包）。
           if ! ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2'; then
             for p in libxml2 libxml2-16 libxml2t64; do
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || true
@@ -648,7 +650,26 @@ jobs:
               fi
             done
           fi
-          ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2' || echo "::warning::libxml2.so.2 not found; prebuilt ld.lld may fail"
+          if ! ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2'; then
+            POOL="http://archive.ubuntu.com/ubuntu/pool/main/libx/libxml2"
+            TMPD=$(mktemp -d)
+            GOT=0
+            for deb in $(curl -fsSL "$POOL/" 2>/dev/null | grep -oE 'libxml2_[0-9][^"]*_amd64\.deb' | sort -u | head -n 6); do
+              if curl -fsSL -o "$TMPD/l.deb" "$POOL/$deb" 2>/dev/null && dpkg-deb -x "$TMPD/l.deb" "$TMPD/root" 2>/dev/null; then
+                if compgen -G "$TMPD/root/usr/lib/x86_64-linux-gnu/libxml2.so.2*" >/dev/null; then
+                  sudo cp -a "$TMPD/root/usr/lib/x86_64-linux-gnu/"libxml2.so.2* /usr/local/lib/
+                  sudo ldconfig
+                  echo "✅ legacy libxml2.so.2 installed from $deb"
+                  GOT=1
+                  break
+                fi
+              fi
+            done
+            rm -rf "$TMPD"
+            if [ "$GOT" = "0" ]; then
+              echo "::warning::legacy libxml2.so.2 unavailable; prebuilt ld.lld may fail"
+            fi
+          fi
 
           sudo apt-get clean
           echo "✅ Dependencies installed"
