@@ -475,7 +475,7 @@ jobs:
           # ubuntu-latest 已切到 26.04：liblz4-tool 过渡包被移除，直接安装 lz4
           PKGS="git curl ca-certificates build-essential clang lld flex bison
                 libelf-dev libssl-dev libncurses-dev zlib1g-dev lz4
-                libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz"
+                libxml2 libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz"
 
           if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS; then
             echo "::warning::bulk install failed, retrying one package at a time"
@@ -494,6 +494,19 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends liblz4-tool || true
           fi
           command -v lz4 >/dev/null 2>&1 || { echo "::error::lz4 is required but unavailable in this image"; exit 1; }
+
+          # ZyC / 部分预编译 ld.lld 动态链接 libxml2.so.2，26.04 精简镜像不带它；
+          # 缺了会在 kconfig 阶段报 "ld.lld: error while loading shared libraries"。
+          if ! ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2'; then
+            for p in libxml2 libxml2-16 libxml2t64; do
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || true
+              if ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2'; then
+                echo "✅ libxml2.so.2 provided by $p"
+                break
+              fi
+            done
+          fi
+          ldconfig -p 2>/dev/null | grep -q 'libxml2\.so\.2' || echo "::warning::libxml2.so.2 not found; prebuilt ld.lld may fail"
 
           sudo apt-get clean
           echo "✅ Dependencies installed"
