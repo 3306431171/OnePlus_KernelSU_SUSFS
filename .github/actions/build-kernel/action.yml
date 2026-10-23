@@ -1200,9 +1200,13 @@ runs:
         # 2) security_add_hooks() takes a `const struct lsm_id *lsmid` instead of a
         #    `const char *`; the struct lsm_id string field is named `name` or `lsm`
         #    depending on the tree, so the field is detected at build time.
-        # 3) KERNEL_SU_UAPI_VERSION on the builtin branch (2) lags the manager (5) even
-        #    though the interfaces (report_event etc.) already exist; sync the declared
-        #    value from upstream main so the manager stops showing "kernel update required".
+        # 3) KERNEL_SU_UAPI_VERSION on the builtin branch can lag the manager built
+        #    from main; the dynamic sync below closes the gap whenever it reopens.
+        # （2026-10-24 清理：pkg_observer track_throne 标志 / selinux 跳板 /
+        #   manager ioctl / KSU_KERNEL_DIR 双前缀四项一次性兼容已随 SukiSU
+        #   builtin ce75122b（2026-10-21 同步官方 KernelSU）上游修复而移除：
+        #   pkg_observer 回归 track_throne(false)，selinux_hide 改为静态函数
+        #   指针，动态管理器 ioctl 重构，Makefile 以 ifeq 处理 $(src) 绝对路径。）
         NETLINK_H="$COMMON_KERNEL_FOLDER/include/linux/netlink.h"
         if [ -f "$NETLINK_H" ] && ! grep -q "cb_mutex" "$NETLINK_H"; then
           # builtin 新布局把 kpm 从 kernel/kpm 挪到 kernel/extension/kpm；只认旧路径会让
@@ -1230,65 +1234,13 @@ runs:
           fi
         fi
 
-        # 3b) Dynamic UAPI sync (scripts/susfs_compat/sync_uapi.sh): fetch the
-        #     upstream main uapi/supercall.h, port missing constants/structs into
-        #     the builtin checkout and raise KERNEL_SU_UAPI_VERSION to match;
-        #     for UAPI >= 6 also wire the kernel side (infra/symbol_resolver,
-        #     do_lookup_symbols handler). Content-guarded and idempotent, so
-        #     future upstream UAPI bumps (7, 8, ...) are picked up automatically.
+        # 3) Dynamic UAPI sync (scripts/susfs_compat/sync_uapi.sh): 对齐官方
+        #    main 分支管理器的 UAPI。builtin 现为 6（与 main 持平），本步当前
+        #    为无操作；脚本内容自适应且幂等，main 未来升 7/8 而 builtin 滞后时
+        #    自动补齐缺失常量/标志/ioctl 并抬升 KERNEL_SU_UAPI_VERSION（含
+        #    infra/symbol_resolver 内核侧接线）。
         if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" ]; then
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" "$KSU_FOLDER"
-        fi
-
-        # 4) builtin 分支合入 PR #3871（pkg_observer 延迟 track_throne 到 task_work）时，
-        #    pkg_observer.c 以 track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS) 调用，
-        #    但 builtin 的 track_throne() 仍为 bool 形参，且没有任何头文件定义该标志
-        #    （BakaSU 的 flags 版 throne_tracker API 未随补丁同步），所有构建在
-        #    ksu.c 聚合编译报 "use of undeclared identifier"。
-        #    改用 track_throne(false)（全量扫描，与 main 分支同函数写法一致）；
-        #    上游修复后按内容检测自动跳过。
-        PKG_OBS="$KSU_FOLDER/kernel/manager/pkg_observer.c"
-        if [ -f "$PKG_OBS" ] && grep -q 'track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)' "$PKG_OBS"; then
-          sed -i 's/track_throne(TRACK_THRONE_FORCE_SYNCHRONOUS)/track_throne(false)/g' "$PKG_OBS"
-          echo "🔧 compat: pkg_observer track_throne flag replaced with track_throne(false) (builtin PR #3871)"
-        fi
-
-        # 5) builtin 2026-05-29 (5fb0c079) 同步 tiann/KernelSU 的 SELinux 新检测修复后，
-        #    selinux_hide.c 在 >=6.6 分支把 security_dump_masked_av_fn /
-        #    context_struct_compute_av_fn 声明为 extern 函数——上游预期由 services.c
-        #    补丁提供这两个跳板符号（builtin c32094a4），但 SUSFS 内核主补丁只提供
-        #    my_security_compute_av_user，6.6/6.12 的 SukiSU 构建在 vmlinux 链接报
-        #    "undefined symbol: context_struct_compute_av_fn"。
-        #    本仓库 SukiSU 固定检出 builtin（含 susfs=false 的构建），在 services.c
-        #    末尾补上两个跳板；详见
-        #    scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh（幂等，自动跳过）。
-        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" ]; then
-          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_selinux_trampolines.sh" "$KSU_FOLDER" "$COMMON_KERNEL_FOLDER"
-        fi
-
-        # 6) builtin PR #987（动态多管理器签名授权，a2339013/c95d6e2c）引入的内核侧
-        #    编译错误：supercall.h 新 ioctl 声明少写 struct 关键字 + 错用已存在的
-        #    KSU_IOCTL_KPM 名字（匿名 enum 重复定义，dispatch.c 引用的
-        #    KSU_IOCTL_MANAGER 缺失）；throne_tracker.c crown_manager() 裸 return;
-        #    （a2339013）与 pkg 块内声明块外引用（c95d6e2c）。全部平台在 ksu.c
-        #    聚合编译失败；详见 scripts/susfs_compat/apply_sukisu_manager_ioctl.sh
-        #    （内容检测守卫，幂等，上游修复后自动跳过）。
-        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" ]; then
-          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_sukisu_manager_ioctl.sh" "$KSU_FOLDER"
-        fi
-
-        # 7) 6.12 GKI 树上 kbuild 给出的 $(src) 已经是 "../drivers/kernelsu"，Makefile 里
-        #    "KSU_KERNEL_DIR := $(srctree)/$(src)" 会再拼一层 srctree，得到
-        #    "../../drivers/kernelsu"，于是 preinit runner 全链路失败：
-        #      No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
-        #      runner.c:15:10: fatal error: 'nolibc.h' file not found
-        #    改成用 $(wildcard) 判断：拼出来的路径看得到 runner.c 才用它，否则直接用 $(src)。
-        #    5.10/5.15/6.1 命中前者，取值与原来一致。
-        KSU_MK="$KSU_FOLDER/kernel/Makefile"
-        if [ -f "$KSU_MK" ] \
-           && grep -q '^KSU_KERNEL_DIR := \$(srctree)/\$(src)$' "$KSU_MK"; then
-          sed -i 's|^KSU_KERNEL_DIR := \$(srctree)/\$(src)$|KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))|' "$KSU_MK"
-          echo "🔧 compat: KSU_KERNEL_DIR no longer double-prefixes \$(srctree) on 6.12 trees"
         fi
 
         cd KernelSU/kernel
