@@ -1519,6 +1519,14 @@ runs:
           && grep -q "^KSU_SECOND_SIGNATURE_RELEASE := 1" KernelSU/kernel/Kbuild \
           || { echo "::error::Kbuild 注入失败（锚点行缺失，FinaSU 上游 Kbuild 结构可能已变化）"; exit 1; }
 
+        # 内核完整版本号（KSU_VERSION_FULL，形如 v<tag>-<sha>@<branch>）分支段校准：
+        # 工作流以 --detach 检出（master / 管理器对齐提交），rev-parse --abbrev-ref
+        # 返回 "HEAD"，管理器「内核完整版本」显示 v1.0.x-xxxx@HEAD。
+        # 与 SukiSU/BakaSU 一致替换为品牌名 @LingLuo（ksu_post_setup.sh finasu 模式）
+        bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" "$KSU_FOLDER" finasu
+        grep -qF 'KSU_VERSION_FULL := v$(if $(KSU_VERSION_TAG),$(KSU_VERSION_TAG),unknown)-$(KSU_VERSION_SHA)@LingLuo' KernelSU/kernel/Kbuild \
+          || { echo "::error::FinaSU 内核完整版本号分支段替换失败（上游 Kbuild 版本行可能已变化）"; exit 1; }
+
         KSU_COMMIT_SHA=$(git -C KernelSU rev-parse HEAD)
         COMMITS=$(git -C KernelSU rev-list --count HEAD)
         KSU_VERSION=$(expr 30000 + $COMMITS)
