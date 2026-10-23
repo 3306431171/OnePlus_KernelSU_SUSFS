@@ -16,7 +16,10 @@
 #   kernel/Kbuild                    （preinit runner 依赖 ksu_syscall_table 直调，
 #                                      SUSFS 手动钩子模式下强制 KSU_NO_PREINIT 禁用）
 #   kernel/core/init.c               （late-load 双分支骨架 + preinit + uts_view init）
-#   kernel/feature/selinux_hide.c    （inline hook 机器整体替换为 SUSFS 手动钩子）
+#   kernel/feature/selinux_hide.c    （保留 10_enable 的 SUSFS 形态：去掉 inline hook
+#                                      机器，但 my_write_context/my_write_access/
+#                                      my_setprocattr/initialize_fake_status 仍非 static
+#                                      —— 内核侧 SUSFS 补丁在 security/selinux 里直接调它们）
 #   kernel/feature/sucompat.c        （userspace_stack_buffer 移入 util.h、
 #                                      su_compat_handler 注册等）
 #   kernel/hook/setuid_hook.c        （master 的 localized UTS view spoofing 在
@@ -27,7 +30,10 @@
 #                                      master 的 late-load/get_info 代码仍依赖它）
 #   kernel/runtime/boot_event.c      （input hook static key 化）
 #   kernel/runtime/ksud_integration.c（preinit 集成、userspace_stack_buffer 移除、
-#                                      ksu_handle_execveat_ksud 签名维持旧形态适配）
+#                                      ksu_handle_execveat_ksud 签名维持旧形态适配；
+#                                      另补 ksu_setup_preinit_file /
+#                                      ksu_preinit_handle_post_execveat 空实现，内核侧
+#                                      fs/exec.c 无条件引用这两个符号）
 #   kernel/supercall/dispatch.c      （get_info 新增 late-load/preinit/PR 标志）
 #
 # FinaSU 上游结构变化导致任一步失败时，需要基于新 master 重新生成
@@ -87,6 +93,20 @@ grep -q "ksu_selinux_hide_drop_backup_if_unused" "$KSU_DIR/kernel/feature/selinu
 if grep -qE 'find_kernel_symbol_exact|patch_text' "$KSU_DIR/kernel/feature/selinux_hide.c"; then
   fail "selinux_hide.c 仍包含 inline hook 机器（resolver/patch_text），drift-fixes 应用不完整"
 fi
+# 内核侧 SUSFS 补丁在 security/selinux/{hooks,selinuxfs}.c 里直接调用这些 KSU 符号，
+# 缺失即 vmlinux 链接失败（undefined symbol）。
+grep -q '^ssize_t my_write_context(' "$KSU_DIR/kernel/feature/selinux_hide.c" \
+  || fail "selinux_hide.c 未导出 my_write_context（security/selinux 直接引用）"
+grep -q '^ssize_t my_write_access(' "$KSU_DIR/kernel/feature/selinux_hide.c" \
+  || fail "selinux_hide.c 未导出 my_write_access（security/selinux 直接引用）"
+grep -q '^int my_setprocattr(' "$KSU_DIR/kernel/feature/selinux_hide.c" \
+  || fail "selinux_hide.c 未导出 my_setprocattr（security/selinux 直接引用）"
+grep -q '^void initialize_fake_status(' "$KSU_DIR/kernel/feature/selinux_hide.c" \
+  || fail "selinux_hide.c 未导出 initialize_fake_status（selinuxfs 直接引用）"
+grep -q '^int ksu_setup_preinit_file(' "$KSU_DIR/kernel/runtime/ksud_integration.c" \
+  || fail "ksud_integration.c 缺少 ksu_setup_preinit_file 空实现（fs/exec.c 无条件引用）"
+grep -q '^int ksu_preinit_handle_post_execveat(' "$KSU_DIR/kernel/runtime/ksud_integration.c" \
+  || fail "ksud_integration.c 缺少 ksu_preinit_handle_post_execveat 空实现（fs/exec.c 无条件引用）"
 if grep -qE 'kernelsu-objs \+= hook/(lsm_hook|syscall_event_bridge|syscall_hook_manager|tp_marker)' "$KSU_DIR/kernel/Kbuild"; then
   fail "Kbuild 仍包含 inline syscall hook 对象，10_enable 补丁未正确应用"
 fi
