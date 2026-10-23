@@ -1771,6 +1771,13 @@ runs:
               FENGCHI_DIR="$KERNEL_PATCHES_FOLDER/oneplus/hmbird" ;;
           esac
           dos2unix "$FENGCHI_DIR/fengchi_${HMBIRD_MODEL}_${OP_OS_VERSION}.patch"
+          # 6.6.89 等较新的一加源码在 task_struct 多插了一个 dmabuf_info KABI 槽，
+          # fengchi 补丁里 sched.h 的 hunk 上下文随之失配：hunk 被丢弃生成 .rej，
+          # set -e 让本步骤在编译前就退出（编译尝试次数 0）。这里按实际布局重写
+          # 该 hunk，保留厂商的 dmabuf_info 槽；布局一致的机型自动跳过。
+          bash "$GITHUB_WORKSPACE/scripts/oneplus_compat/fix_hmbird_patch_drift.sh" \
+            "$COMMON_KERNEL_FOLDER" \
+            "$FENGCHI_DIR/fengchi_${HMBIRD_MODEL}_${OP_OS_VERSION}.patch"
           patch -p1 -F 3 < "$FENGCHI_DIR/fengchi_${HMBIRD_MODEL}_${OP_OS_VERSION}.patch"
           dos2unix "$KERNEL_PATCHES_FOLDER/oneplus/hmbird/overwriter.patch"
           patch -p1 -F 3 < "$KERNEL_PATCHES_FOLDER/oneplus/hmbird/overwriter.patch"
