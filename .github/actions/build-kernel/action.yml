@@ -1203,10 +1203,12 @@ runs:
         # 3) KERNEL_SU_UAPI_VERSION on the builtin branch can lag the manager built
         #    from main; the dynamic sync below closes the gap whenever it reopens.
         # （2026-10-24 清理：pkg_observer track_throne 标志 / selinux 跳板 /
-        #   manager ioctl / KSU_KERNEL_DIR 双前缀四项一次性兼容已随 SukiSU
-        #   builtin ce75122b（2026-10-21 同步官方 KernelSU）上游修复而移除：
-        #   pkg_observer 回归 track_throne(false)，selinux_hide 改为静态函数
-        #   指针，动态管理器 ioctl 重构，Makefile 以 ifeq 处理 $(src) 绝对路径。）
+        #   manager ioctl 三项一次性兼容已随 SukiSU builtin ce75122b
+        #   （2026-10-21 同步官方 KernelSU）上游修复而移除：pkg_observer 回归
+        #   track_throne(false)，selinux_hide 改为静态函数指针，动态管理器
+        #   ioctl 重构。KSU_KERNEL_DIR 兼容已恢复（见下方第 4 项）：builtin
+        #   的 ifeq filter 只拦绝对路径，拦不住 6.12 OP 树相对的
+        #   "../drivers/kernelsu"，上游并未真正修复。）
         NETLINK_H="$COMMON_KERNEL_FOLDER/include/linux/netlink.h"
         if [ -f "$NETLINK_H" ] && ! grep -q "cb_mutex" "$NETLINK_H"; then
           # builtin 新布局把 kpm 从 kernel/kpm 挪到 kernel/extension/kpm；只认旧路径会让
@@ -1241,6 +1243,22 @@ runs:
         #    infra/symbol_resolver 内核侧接线）。
         if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" ]; then
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" "$KSU_FOLDER"
+        fi
+
+        # 4) 6.12 GKI 树（canoe/mt6789/mt6993 等）以 O=out 构建：make -C out 时
+        #    kbuild 给 drivers/kernelsu 的 $(src) 是 "../drivers/kernelsu"（相对），
+        #    builtin Makefile 的 "KSU_KERNEL_DIR := $(srctree)/$(src)"（其 ifeq
+        #    filter 只拦绝对路径）再拼一层相对 $(srctree) 得到
+        #    "../../drivers/kernelsu"，preinit runner 规则在 make 规则求值阶段即报
+        #      No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
+        #    改为 $(wildcard) 自校验拼接：拼出的路径看得到 runner.c 才用它，
+        #    否则退回 $(src)；≤6.6 树取值与原来一致（FinaSU 同款修法）。
+        SU_KB="$KSU_FOLDER/kernel/Makefile"
+        if [ -f "$SU_KB" ] && grep -qF 'KSU_KERNEL_DIR := $(srctree)/$(src)' "$SU_KB"; then
+          sed -i 's|^KSU_KERNEL_DIR := \$(srctree)/\$(src)$|KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))|' "$SU_KB"
+          grep -qF 'KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))' "$SU_KB" \
+            || { echo "::error::SukiSU Makefile KSU_KERNEL_DIR 重写失败（上游结构可能已变化）"; exit 1; }
+          echo "🔧 compat: SukiSU KSU_KERNEL_DIR wildcard-guarded against 6.12 relative \$(src)"
         fi
 
         cd KernelSU/kernel
