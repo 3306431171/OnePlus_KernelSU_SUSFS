@@ -1471,6 +1471,24 @@ runs:
           && grep -q "^KSU_SECOND_SIGNATURE_RELEASE := 1" KernelSU/kernel/Kbuild \
           || { echo "::error::Kbuild 注入失败（锚点行缺失，FinaSU 上游 Kbuild 结构可能已变化）"; exit 1; }
 
+        # 6.12 GKI 树（canoe/mt6789/mt6993 等）以 O=out 构建：make -C out 时
+        # kbuild 给 drivers/kernelsu 的 $(src) 是 "../drivers/kernelsu"（相对），
+        # FinaSU Kbuild 的 "KSU_KERNEL_DIR := $(srctree)/$(src)"（其 ifeq filter
+        # 只拦绝对路径）再拼一层相对 $(srctree) 得到 "../../drivers/kernelsu"，
+        # preinit runner 规则在 make 规则求值阶段即报
+        #   No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
+        # （此前两步法补丁强制 KSU_NO_PREINIT 关掉 preinit 故未暴露；切到内置
+        # SUSFS 保留 kprobe preinit 后必现）。改为 $(wildcard) 自校验拼接
+        # （SukiSU builtin 同款手法）：拼出的路径看得到 runner.c 才用它，否则
+        # 退回 $(src)；≤6.6 树 $(src) 相对 + $(srctree) 绝对，取值与原来一致。
+        FINA_KB="$KSU_FOLDER/kernel/Kbuild"
+        if [ -f "$FINA_KB" ] && grep -qF 'KSU_KERNEL_DIR := $(srctree)/$(src)' "$FINA_KB"; then
+          sed -i 's|^KSU_KERNEL_DIR := \$(srctree)/\$(src)$|KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))|' "$FINA_KB"
+          grep -qF 'KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))' "$FINA_KB" \
+            || { echo "::error::FinaSU Kbuild KSU_KERNEL_DIR 重写失败（上游 Kbuild 结构可能已变化）"; exit 1; }
+          echo "🔧 compat: FinaSU KSU_KERNEL_DIR wildcard-guarded against 6.12 relative \$(src)"
+        fi
+
         # 内核完整版本号（KSU_VERSION_FULL，形如 v<tag>-<sha>@<branch>）分支段校准：
         # 工作流以 --detach 检出（master / 管理器对齐提交），rev-parse --abbrev-ref
         # 返回 "HEAD"，管理器「内核完整版本」显示 v1.0.x-xxxx@HEAD。
