@@ -1333,13 +1333,6 @@ runs:
           bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" "$KSU_FOLDER" bakasu
           echo "✅ BakaSU 版本标识已注入 @LingLuo"
         fi
-        # 上游 BakaSU 自 48fa4bb 起以无条件 $(error) 暂停 SUSFS 内核构建
-        # （等待 simonpunk 同步最新 selinux_hide 模型）。本仓库已在 SUSFS 补丁
-        # 阶段适配该模型（scripts/susfs_compat/apply_selinux_new_model.sh），
-        # 这里替换为上游预期的按内核版本门控，详见 scripts/bakasu_compat/resume_susfs.sh
-        if [ -f "$GITHUB_WORKSPACE/scripts/bakasu_compat/resume_susfs.sh" ]; then
-          bash "$GITHUB_WORKSPACE/scripts/bakasu_compat/resume_susfs.sh" "$KSU_FOLDER"
-        fi
         cd KernelSU/kernel
 
         # BakaSU Kbuild 以 30000 + 提交数 + 700 自动计算版本，无需 sed
@@ -1676,9 +1669,9 @@ runs:
           echo "Added VMA_PAD_START fallback definition to fs/proc/task_mmu.c"
         fi
 
-        # 把 SUSFS 的 SELinux 集成切换到新 selinux_hide 模型（BakaSU 48fa4bb 起
-        # 暂停构建的根因）：<6.6 的 &fake_state 调用切换为 backup_sepolicy +
-        # 8 参 security_context_to_sid_with_policy（新内核已删除 fake_state 定义），
+        # 把 SUSFS 的 SELinux 集成切换到新 selinux_hide 模型（BakaSU 同步
+        # tiann 上游新模型后已删除 fake_state 定义）：<6.6 的 &fake_state
+        # 调用切换为 backup_sepolicy + 8 参 security_context_to_sid_with_policy，
         # >=6.6 的 6 参调用/声明归一化为 8 参（新模型签名）。脚本按 KernelSU
         # 实际形态自动跳过旧模型检出；幂等。FinaSU 内置 SUSFS 集成自带新版
         # selinux_hide（CONFIG_KSU_SUSFS 下导出 my_* 符号），跳过。
