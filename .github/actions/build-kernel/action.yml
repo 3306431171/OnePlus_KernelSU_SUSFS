@@ -567,6 +567,18 @@ runs:
         PATCHLEVEL=$(grep '^PATCHLEVEL *=' Makefile | awk '{print $3}')
         SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | awk '{print $3}')
         FULL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
+
+        # The config stem declares the kernel sub-version it targets (e.g.
+        # OnePlus-Turbo6X-6.1.157), but most manifests pin a moving OnePlus
+        # branch, which OnePlus can bump underneath us. Fail loudly instead of
+        # silently building the newer kernel under the old config name: rename
+        # the drifted config to the new version, or pin the manifest to the old
+        # sources if the old variant must stay buildable.
+        if [[ "$MODEL_FLAT" =~ -([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+           && [ "${BASH_REMATCH[1]}" != "$FULL_VERSION" ]; then
+          echo "::error::Config '$MODEL_FLAT' declares kernel ${BASH_REMATCH[1]} but the pinned manifest source is $FULL_VERSION. Update the config name/model to the actual version (and pin the old sources in a separate manifest/config if the old variant must remain buildable)."
+          exit 1
+        fi
         
         cd "$ARTIFACTS_FOLDER"
         echo "$ANDROID_VERSION-$FULL_VERSION" > "${OP_MODEL}_${OP_OS_VERSION}.txt"
