@@ -2900,10 +2900,7 @@ runs:
         fi
         
         cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
-        
-        mv "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" "$AK3_FOLDER/"
-        # Record the complete built kernel release (uname -r) in the AK3 metadata file
-        echo "$KERNEL_RELEASE" >> "$AK3_FOLDER/${OP_MODEL}_${OP_OS_VERSION}.txt"
+
         cd "$AK3_FOLDER"
         
         sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh
